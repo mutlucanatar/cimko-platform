@@ -1,0 +1,31 @@
+# Üretim benzeri kurulum: PostgreSQL + uygulama
+# Kullanım: prisma/schema.prisma içindeki provider'ı "postgresql" yapın, sonra:
+#   docker compose up --build
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: cimko
+      POSTGRES_PASSWORD: degistirin-guclu-parola
+      POSTGRES_DB: cimko
+    volumes:
+      - cimko-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cimko"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://cimko:degistirin-guclu-parola@db:5432/cimko
+      SESSION_SECRET: degistirin-en-az-32-karakter-gizli-anahtar
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+volumes:
+  cimko-db:

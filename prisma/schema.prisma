@@ -1,0 +1,523 @@
+// Çimko Mavi Yaka Platformu — Veri Modeli
+// Demo: SQLite · Üretim: PostgreSQL (provider değişikliği + enum'lar String tutulduğu için uyumlu)
+// JSON içerikler taşınabilirlik için String alanlarda saklanır (lib/json.ts yardımcıları ile).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ── Kimlik ve Yetki ─────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  role         String   // SISTEM_YONETICISI | IK_YONETICISI | IK_UZMANI | TESIS_YONETICISI | BOLUM_YONETICISI | TEKNIK_DEGERLENDIRICI | ISG_UZMANI
+  facilityId   String?  // tesis kapsam kısıtı (null = tüm tesisler)
+  departmentId String?  // bölüm kapsam kısıtı
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  facility    Facility?   @relation(fields: [facilityId], references: [id])
+  department  Department? @relation(fields: [departmentId], references: [id])
+  stageMoves  StageHistory[]
+  interviews  Interview[] @relation("evaluator")
+  auditLogs   AuditLog[]
+  evaluations PerformanceEvaluation[] @relation("perfEvaluator")
+  notifications Notification[]
+}
+
+// ── Organizasyon ────────────────────────────────────────────────
+
+model Facility {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // CIMENTO_FABRIKASI | HAZIR_BETON_TESISI | MERKEZ
+  city      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  departments Department[]
+  users       User[]
+  vacancies   Vacancy[]
+  employees   Employee[]
+}
+
+model Department {
+  id         String  @id @default(cuid())
+  facilityId String
+  name       String
+  isActive   Boolean @default(true)
+
+  facility  Facility   @relation(fields: [facilityId], references: [id])
+  positions Position[]
+  users     User[]
+}
+
+model Position {
+  id            String  @id @default(cuid())
+  departmentId  String
+  name          String
+  jobFamily     String  // URETIM | BAKIM | KALITE | LOJISTIK | HAZIR_BETON | DIGER
+  description   String  @default("")
+  educationReq  String  @default("") // ör. En az lise / meslek lisesi
+  experienceReq String  @default("")
+  certificates  String  @default("") // gerekli sertifikalar (serbest metin)
+  shiftSuitable Boolean @default(true)
+  physicalReq   String  @default("")
+  isgNotes      String  @default("")
+  isActive      Boolean @default(true)
+
+  // İşe alım ölçüm profili (PİK analizi: baraj 50, norm 60/65)
+  cutoffScore  Int @default(50) // baraj — yetenek testi asgari puanı
+  normScore    Int @default(65) // pozisyon normu — hedef puan
+  abilityDims  String @default("[\"SAYISAL\",\"SOZEL\",\"SOYUT\",\"DIKKAT\"]") // JSON dizi; MEKANIK opsiyonel
+
+  department        Department @relation(fields: [departmentId], references: [id])
+  personalityRanges PositionPersonalityRange[]
+  competencies      PositionCompetency[]
+  vacancies         Vacancy[]
+  applications      Application[]
+  employees         Employee[]
+  scoreWeight       ScoreWeight?
+}
+
+// ── Yetkinlik Kütüphanesi ───────────────────────────────────────
+
+model Competency {
+  id                 String @id @default(cuid())
+  name               String
+  category           String // ISG | TEKNIK | DAVRANISSAL | KALITE | SUREKLI_IYILESTIRME
+  description        String @default("")
+  positiveIndicators String @default("[]") // JSON string[]
+  negativeIndicators String @default("[]") // JSON string[]
+  levelDefinitions   String @default("[]") // JSON [{level:1..5, text}]
+  isActive           Boolean @default(true)
+
+  positions PositionCompetency[]
+}
+
+model PositionCompetency {
+  id            String @id @default(cuid())
+  positionId    String
+  competencyId  String
+  expectedLevel Int    @default(3) // 1-5
+  weight        Int    @default(10) // yüzde
+
+  position   Position   @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  competency Competency @relation(fields: [competencyId], references: [id], onDelete: Cascade)
+
+  @@unique([positionId, competencyId])
+}
+
+// ── Kişilik Modeli ──────────────────────────────────────────────
+
+model PersonalityDimension {
+  id          String @id @default(cuid())
+  code        String @unique // AGRESIFLIK, DUYGUSAL_DENGE, ...
+  name        String
+  description String @default("")
+  order       Int    @default(0)
+
+  ranges PositionPersonalityRange[]
+  items  Item[]
+}
+
+model PositionPersonalityRange {
+  id          String @id @default(cuid())
+  positionId  String
+  dimensionId String
+  minValue    Int // 1-10
+  maxValue    Int // 1-10
+
+  position  Position             @relation(fields: [positionId], references: [id], onDelete: Cascade)
+  dimension PersonalityDimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@unique([positionId, dimensionId])
+}
+
+// ── Soru Bankası ve Test Motoru ─────────────────────────────────
+
+model StimulusGroup {
+  id       String @id @default(cuid())
+  title    String
+  content  String @default("") // ortak yönerge/açıklama metni
+  imageUrl String @default("")
+
+  items Item[]
+}
+
+model Item {
+  id              String  @id @default(cuid())
+  type            String  // COKTAN_SECMELI | LIKERT3 | IKILI_SECIM | SIFAT | ACIK_UCLU
+  text            String
+  imageUrl        String  @default("")
+  dimension       String  @default("") // yetenek boyutu: SAYISAL | SOZEL | SOYUT | DIKKAT | MEKANIK (yetenek maddeleri için)
+  personalityDimId String? // kişilik maddeleri için boyut
+  direction       Int     @default(1) // 1 düz, -1 ters madde (kişilik)
+  options         String  @default("[]") // JSON [{key, text, imageUrl?}]
+  correctKey      String? // yetenek maddelerinde doğru şık; kişilik IKILI_SECIM'de ideal uç
+  difficulty      String  @default("ORTA") // KOLAY | ORTA | ZOR
+  stimulusGroupId String?
+  isActive        Boolean @default(true)
+  createdAt       DateTime @default(now())
+
+  personalityDim PersonalityDimension? @relation(fields: [personalityDimId], references: [id])
+  stimulusGroup  StimulusGroup?        @relation(fields: [stimulusGroupId], references: [id])
+  testItems      TestItem[]
+  answers        Answer[]
+}
+
+model TestForm {
+  id          String  @id @default(cuid())
+  name        String
+  code        String  @unique
+  kind        String  // YETENEK | KISILIK | TUTUM
+  description String  @default("")
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+
+  sections  TestSection[]
+  examTests ExamPackageTest[]
+  results   AssignmentTest[]
+}
+
+model TestSection {
+  id          String  @id @default(cuid())
+  testFormId  String
+  name        String
+  order       Int     @default(0)
+  durationMin Int     @default(25)
+  allowSkip   Boolean @default(true) // kişilik bölümlerinde false
+  shuffle     Boolean @default(false)
+  instruction String  @default("")
+
+  testForm TestForm   @relation(fields: [testFormId], references: [id], onDelete: Cascade)
+  items    TestItem[]
+}
+
+model TestItem {
+  id        String @id @default(cuid())
+  sectionId String
+  itemId    String
+  order     Int    @default(0)
+
+  section TestSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  item    Item        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, itemId])
+}
+
+model ExamPackage {
+  id        String    @id @default(cuid())
+  name      String
+  startsAt  DateTime?
+  endsAt    DateTime?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+
+  tests       ExamPackageTest[]
+  assignments Assignment[]
+}
+
+model ExamPackageTest {
+  id            String @id @default(cuid())
+  examPackageId String
+  testFormId    String
+  order         Int    @default(0)
+
+  examPackage ExamPackage @relation(fields: [examPackageId], references: [id], onDelete: Cascade)
+  testForm    TestForm    @relation(fields: [testFormId], references: [id], onDelete: Cascade)
+
+  @@unique([examPackageId, testFormId])
+}
+
+// ── Aday ve Başvuru ─────────────────────────────────────────────
+
+model Candidate {
+  id             String    @id @default(cuid())
+  firstName      String
+  lastName       String
+  nationalId     String?   // TC No (mükerrer kontrol)
+  email          String?
+  phone          String?
+  gender         String?   // ERKEK | KADIN | BELIRTMEK_ISTEMIYOR
+  birthDate      DateTime?
+  educationLevel String?   // ILKOKUL | ORTAOKUL | LISE | MESLEK_LISESI | ONLISANS | LISANS
+  schoolDept     String?
+  driverLicense  String?
+  militaryStatus String?
+  city           String?
+  address        String?
+  source         String    @default("IK_KAYIT") // ILAN_BASVURU | GENEL_BASVURU | IK_KAYIT | EXCEL | REFERANS
+  coverLetter    String    @default("") // adayın ön yazısı / açıklaması
+  shiftOk        Boolean   @default(true)
+  blacklisted    Boolean   @default(false)
+  blacklistNote  String    @default("")
+  notes          String    @default("")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  applications Application[]
+  assignments  Assignment[]
+  consents     ConsentRecord[]
+  documents    Document[]
+  contactLogs  ContactLog[]
+  employee     Employee?
+}
+
+model ConsentRecord {
+  id          String   @id @default(cuid())
+  candidateId String
+  kind        String   // KVKK_BASVURU | KVKK_SINAV
+  textVersion String
+  acceptedAt  DateTime @default(now())
+  ipAddress   String   @default("")
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  candidateId String
+  kind        String   // OZGECMIS | SERTIFIKA | MYB | DIGER
+  fileName    String
+  storedPath  String
+  mimeType    String
+  sizeBytes   Int
+  uploadedAt  DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+}
+
+model ContactLog {
+  id          String   @id @default(cuid())
+  candidateId String
+  channel     String   // TELEFON | EPOSTA | SMS | YUZYUZE
+  note        String
+  userId      String?
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+}
+
+model Vacancy {
+  id           String    @id @default(cuid())
+  slug         String    @unique
+  title        String
+  positionId   String
+  facilityId   String
+  description  String    @default("")
+  requirements String    @default("")
+  status       String    @default("ACIK") // TASLAK | ACIK | KAPALI
+  publishedAt  DateTime?
+  closesAt     DateTime?
+  createdAt    DateTime  @default(now())
+
+  position     Position      @relation(fields: [positionId], references: [id])
+  facility     Facility      @relation(fields: [facilityId], references: [id])
+  applications Application[]
+}
+
+model Application {
+  id          String   @id @default(cuid())
+  candidateId String
+  positionId  String?  // null = genel başvuru ("Özgeçmiş Bırak")
+  vacancyId   String?
+  stage       String   @default("YENI_BASVURU") // işe alım panosu aşaması
+  status      String   @default("AKTIF") // AKTIF | OLUMSUZ | YEDEK | ISE_ALINDI
+  rejectReason String  @default("")
+  suitability Float?   // hesaplanan işe uygunluk puanı (0-100)
+  appliedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  position  Position? @relation(fields: [positionId], references: [id])
+  vacancy   Vacancy?  @relation(fields: [vacancyId], references: [id])
+  history   StageHistory[]
+  interviews Interview[]
+}
+
+model StageHistory {
+  id            String   @id @default(cuid())
+  applicationId String
+  fromStage     String
+  toStage       String
+  userId        String?
+  note          String   @default("")
+  createdAt     DateTime @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id])
+}
+
+// ── Sınav Ataması ve Sonuçlar ───────────────────────────────────
+
+model Assignment {
+  id            String    @id @default(cuid())
+  candidateId   String
+  examPackageId String
+  accessCode    String    @unique // ör. 7K-3F9A
+  positionId    String?   // profil karşılaştırması için hedef pozisyon
+  expiresAt     DateTime?
+  kvkkAccepted  Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  examPackage ExamPackage    @relation(fields: [examPackageId], references: [id])
+  tests       AssignmentTest[]
+}
+
+model AssignmentTest {
+  id           String    @id @default(cuid())
+  assignmentId String
+  testFormId   String
+  status       String    @default("BASLAMADI") // BASLAMADI | DEVAM | TAMAMLANDI
+  startedAt    DateTime?
+  completedAt  DateTime?
+  currentSection Int     @default(0)
+  sectionDeadline DateTime? // aktif bölümün bitiş zamanı (kesinti telafisi: admin güncelleyebilir)
+  totalScore   Float?
+  resultJson   String    @default("{}") // boyut puanları, GEÇTİ/KALDI, uyum %si, uyumu düşüren boyutlar
+  itemOrder    String    @default("[]") // karıştırılmış madde sırası (JSON)
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  testForm   TestForm   @relation(fields: [testFormId], references: [id])
+  answers    Answer[]
+
+  @@unique([assignmentId, testFormId])
+}
+
+model Answer {
+  id               String   @id @default(cuid())
+  assignmentTestId String
+  itemId           String
+  selectedKey      String?
+  textValue        String?
+  isCorrect        Boolean?
+  answeredAt       DateTime @default(now())
+
+  assignmentTest AssignmentTest @relation(fields: [assignmentTestId], references: [id], onDelete: Cascade)
+  item           Item           @relation(fields: [itemId], references: [id])
+
+  @@unique([assignmentTestId, itemId])
+}
+
+// ── Mülakat ve Değerlendirmeler ─────────────────────────────────
+
+model Interview {
+  id            String    @id @default(cuid())
+  applicationId String
+  type          String    // IK_MULAKAT | TEKNIK_MULAKAT | ISG_DEGERLENDIRME | UYGULAMALI
+  evaluatorId   String
+  scheduledAt   DateTime?
+  status        String    @default("PLANLANDI") // PLANLANDI | TAMAMLANDI | IPTAL
+  scoresJson    String    @default("[]") // [{criterion, score(1-5), comment}]
+  overallScore  Float?
+  recommendation String   @default("") // OLUMLU | KOSULLU | OLUMSUZ
+  comments      String    @default("")
+  completedAt   DateTime?
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  evaluator   User        @relation("evaluator", fields: [evaluatorId], references: [id])
+}
+
+// İşe uygunluk puanı ağırlıkları (pozisyon bazlı; null pozisyon = genel varsayılan)
+model ScoreWeight {
+  id               String  @id @default(cuid())
+  positionId       String? @unique // null → genel varsayılan
+  abilityWeight    Int     @default(35)
+  personalityWeight Int    @default(20)
+  ikInterviewWeight Int    @default(15)
+  techInterviewWeight Int  @default(15)
+  practicalWeight  Int     @default(10)
+  isgWeight        Int     @default(5)
+  // toplam 100 kontrolü uygulama katmanında
+
+  position Position? @relation(fields: [positionId], references: [id], onDelete: Cascade)
+}
+
+// ── Çalışan ve Performans (Faz 2 iskeleti) ──────────────────────
+
+model Employee {
+  id          String    @id @default(cuid())
+  candidateId String?   @unique
+  sicilNo     String    @unique
+  firstName   String
+  lastName    String
+  positionId  String
+  facilityId  String
+  hireDate    DateTime
+  status      String    @default("DENEME") // DENEME | KADROLU | AYRILDI
+
+  candidate Candidate? @relation(fields: [candidateId], references: [id])
+  position  Position   @relation(fields: [positionId], references: [id])
+  facility  Facility   @relation(fields: [facilityId], references: [id])
+  evaluations PerformanceEvaluation[]
+}
+
+model PerformancePeriod {
+  id        String   @id @default(cuid())
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  status    String   @default("TASLAK") // TASLAK | ACIK | KAPALI
+
+  evaluations PerformanceEvaluation[]
+}
+
+model PerformanceEvaluation {
+  id          String    @id @default(cuid())
+  periodId    String
+  employeeId  String
+  evaluatorId String
+  type        String    @default("AMIR") // AMIR | OZ | TEKNIK | ISG | IK
+  scoresJson  String    @default("[]") // [{competencyId, name, expectedLevel, score, note}]
+  totalScore  Float?
+  status      String    @default("TASLAK") // TASLAK | TAMAMLANDI
+  comments    String    @default("")
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  period    PerformancePeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employee  Employee          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  evaluator User              @relation("perfEvaluator", fields: [evaluatorId], references: [id])
+
+  @@unique([periodId, employeeId, evaluatorId, type])
+}
+
+// ── Sistem ──────────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  actorType String   @default("USER") // USER | CANDIDATE | SYSTEM
+  action    String   // CREATE | UPDATE | DELETE | LOGIN | EXPORT | STAGE_MOVE | SCORE | ...
+  entity    String
+  entityId  String   @default("")
+  detail    String   @default("")
+  ipAddress String   @default("")
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  title     String
+  body      String    @default("")
+  link      String    @default("")
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
