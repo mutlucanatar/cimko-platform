@@ -19,19 +19,19 @@ model User {
   passwordHash String
   firstName    String
   lastName     String
-  role         String   // SISTEM_YONETICISI | IK_YONETICISI | IK_UZMANI | TESIS_YONETICISI | BOLUM_YONETICISI | TEKNIK_DEGERLENDIRICI | ISG_UZMANI
-  facilityId   String?  // tesis kapsam kısıtı (null = tüm tesisler)
-  departmentId String?  // bölüm kapsam kısıtı
+  role         String // SISTEM_YONETICISI | IK_YONETICISI | IK_UZMANI | TESIS_YONETICISI | BOLUM_YONETICISI | TEKNIK_DEGERLENDIRICI | ISG_UZMANI
+  facilityId   String? // tesis kapsam kısıtı (null = tüm tesisler)
+  departmentId String? // bölüm kapsam kısıtı
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  facility    Facility?   @relation(fields: [facilityId], references: [id])
-  department  Department? @relation(fields: [departmentId], references: [id])
-  stageMoves  StageHistory[]
-  interviews  Interview[] @relation("evaluator")
-  auditLogs   AuditLog[]
-  evaluations PerformanceEvaluation[] @relation("perfEvaluator")
+  facility      Facility?               @relation(fields: [facilityId], references: [id])
+  department    Department?             @relation(fields: [departmentId], references: [id])
+  stageMoves    StageHistory[]
+  interviews    Interview[]             @relation("evaluator")
+  auditLogs     AuditLog[]
+  evaluations   PerformanceEvaluation[] @relation("perfEvaluator")
   notifications Notification[]
 }
 
@@ -40,7 +40,7 @@ model User {
 model Facility {
   id        String   @id @default(cuid())
   name      String
-  type      String   // CIMENTO_FABRIKASI | HAZIR_BETON_TESISI | MERKEZ
+  type      String // CIMENTO_FABRIKASI | HAZIR_BETON_TESISI | MERKEZ
   city      String
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -66,40 +66,45 @@ model Position {
   id            String  @id @default(cuid())
   departmentId  String
   name          String
-  jobFamily     String  // URETIM | BAKIM | KALITE | LOJISTIK | HAZIR_BETON | DIGER
+  jobFamily     String
   description   String  @default("")
-  educationReq  String  @default("") // ör. En az lise / meslek lisesi
+  educationReq  String  @default("")
   experienceReq String  @default("")
-  certificates  String  @default("") // gerekli sertifikalar (serbest metin)
+  certificates  String  @default("")
   shiftSuitable Boolean @default(true)
   physicalReq   String  @default("")
   isgNotes      String  @default("")
   isActive      Boolean @default(true)
 
-  // İşe alım ölçüm profili (PİK analizi: baraj 50, norm 60/65)
-  cutoffScore  Int @default(50) // baraj — yetenek testi asgari puanı
-  normScore    Int @default(65) // pozisyon normu — hedef puan
-  abilityDims  String @default("[\"SAYISAL\",\"SOZEL\",\"SOYUT\",\"DIKKAT\"]") // JSON dizi; MEKANIK opsiyonel
+  cutoffScore Int    @default(50)
+  normScore   Int    @default(65)
+  abilityDims String @default("[\"SAYISAL\",\"SOZEL\",\"SOYUT\",\"DIKKAT\"]")
 
-  department        Department @relation(fields: [departmentId], references: [id])
+  examPackageId     String?
+  assessmentModelId String?
+
+  department        Department                 @relation(fields: [departmentId], references: [id])
   personalityRanges PositionPersonalityRange[]
   competencies      PositionCompetency[]
   vacancies         Vacancy[]
   applications      Application[]
   employees         Employee[]
+  assignments       Assignment[]
   scoreWeight       ScoreWeight?
+  assessmentModel   AssessmentModel?           @relation(fields: [assessmentModelId], references: [id])
+  examPackage       ExamPackage?               @relation(fields: [examPackageId], references: [id])
 }
 
 // ── Yetkinlik Kütüphanesi ───────────────────────────────────────
 
 model Competency {
-  id                 String @id @default(cuid())
+  id                 String  @id @default(cuid())
   name               String
   category           String // ISG | TEKNIK | DAVRANISSAL | KALITE | SUREKLI_IYILESTIRME
-  description        String @default("")
-  positiveIndicators String @default("[]") // JSON string[]
-  negativeIndicators String @default("[]") // JSON string[]
-  levelDefinitions   String @default("[]") // JSON [{level:1..5, text}]
+  description        String  @default("")
+  positiveIndicators String  @default("[]") // JSON string[]
+  negativeIndicators String  @default("[]") // JSON string[]
+  levelDefinitions   String  @default("[]") // JSON [{level:1..5, text}]
   isActive           Boolean @default(true)
 
   positions PositionCompetency[]
@@ -144,6 +149,35 @@ model PositionPersonalityRange {
   @@unique([positionId, dimensionId])
 }
 
+model AssessmentModel {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  description String   @default("")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tests     AssessmentModelTest[]
+  positions Position[]
+}
+
+model AssessmentModelTest {
+  id                String  @id @default(cuid())
+  assessmentModelId String
+  testFormId        String
+  order             Int     @default(0)
+  cutoffScore       Int?
+  normScore         Int?
+  isRequired        Boolean @default(true)
+
+  assessmentModel AssessmentModel @relation(fields: [assessmentModelId], references: [id], onDelete: Cascade)
+  testForm        TestForm        @relation(fields: [testFormId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentModelId, testFormId])
+  @@index([assessmentModelId, order])
+}
+
 // ── Soru Bankası ve Test Motoru ─────────────────────────────────
 
 model StimulusGroup {
@@ -156,19 +190,19 @@ model StimulusGroup {
 }
 
 model Item {
-  id              String  @id @default(cuid())
-  type            String  // COKTAN_SECMELI | LIKERT3 | IKILI_SECIM | SIFAT | ACIK_UCLU
-  text            String
-  imageUrl        String  @default("")
-  dimension       String  @default("") // yetenek boyutu: SAYISAL | SOZEL | SOYUT | DIKKAT | MEKANIK (yetenek maddeleri için)
+  id               String   @id @default(cuid())
+  type             String // COKTAN_SECMELI | LIKERT3 | IKILI_SECIM | SIFAT | ACIK_UCLU
+  text             String
+  imageUrl         String   @default("")
+  dimension        String   @default("") // yetenek boyutu: SAYISAL | SOZEL | SOYUT | DIKKAT | MEKANIK (yetenek maddeleri için)
   personalityDimId String? // kişilik maddeleri için boyut
-  direction       Int     @default(1) // 1 düz, -1 ters madde (kişilik)
-  options         String  @default("[]") // JSON [{key, text, imageUrl?}]
-  correctKey      String? // yetenek maddelerinde doğru şık; kişilik IKILI_SECIM'de ideal uç
-  difficulty      String  @default("ORTA") // KOLAY | ORTA | ZOR
-  stimulusGroupId String?
-  isActive        Boolean @default(true)
-  createdAt       DateTime @default(now())
+  direction        Int      @default(1) // 1 düz, -1 ters madde (kişilik)
+  options          String   @default("[]") // JSON [{key, text, imageUrl?}]
+  correctKey       String? // yetenek maddelerinde doğru şık; kişilik IKILI_SECIM'de ideal uç
+  difficulty       String   @default("ORTA") // KOLAY | ORTA | ZOR
+  stimulusGroupId  String?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
 
   personalityDim PersonalityDimension? @relation(fields: [personalityDimId], references: [id])
   stimulusGroup  StimulusGroup?        @relation(fields: [stimulusGroupId], references: [id])
@@ -177,17 +211,18 @@ model Item {
 }
 
 model TestForm {
-  id          String  @id @default(cuid())
+  id          String   @id @default(cuid())
   name        String
-  code        String  @unique
-  kind        String  // YETENEK | KISILIK | TUTUM
-  description String  @default("")
-  isActive    Boolean @default(true)
+  code        String   @unique
+  kind        String // YETENEK | KISILIK | TUTUM
+  description String   @default("")
+  isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
 
-  sections  TestSection[]
-  examTests ExamPackageTest[]
-  results   AssignmentTest[]
+  sections         TestSection[]
+  examTests        ExamPackageTest[]
+  results          AssignmentTest[]
+  assessmentModels AssessmentModelTest[]
 }
 
 model TestSection {
@@ -226,6 +261,7 @@ model ExamPackage {
 
   tests       ExamPackageTest[]
   assignments Assignment[]
+  positions   Position[]
 }
 
 model ExamPackageTest {
@@ -246,12 +282,12 @@ model Candidate {
   id             String    @id @default(cuid())
   firstName      String
   lastName       String
-  nationalId     String?   // TC No (mükerrer kontrol)
+  nationalId     String? // TC No (mükerrer kontrol)
   email          String?
   phone          String?
-  gender         String?   // ERKEK | KADIN | BELIRTMEK_ISTEMIYOR
+  gender         String? // ERKEK | KADIN | BELIRTMEK_ISTEMIYOR
   birthDate      DateTime?
-  educationLevel String?   // ILKOKUL | ORTAOKUL | LISE | MESLEK_LISESI | ONLISANS | LISANS
+  educationLevel String? // ILKOKUL | ORTAOKUL | LISE | MESLEK_LISESI | ONLISANS | LISANS
   schoolDept     String?
   driverLicense  String?
   militaryStatus String?
@@ -277,7 +313,7 @@ model Candidate {
 model ConsentRecord {
   id          String   @id @default(cuid())
   candidateId String
-  kind        String   // KVKK_BASVURU | KVKK_SINAV
+  kind        String // KVKK_BASVURU | KVKK_SINAV
   textVersion String
   acceptedAt  DateTime @default(now())
   ipAddress   String   @default("")
@@ -288,7 +324,7 @@ model ConsentRecord {
 model Document {
   id          String   @id @default(cuid())
   candidateId String
-  kind        String   // OZGECMIS | SERTIFIKA | MYB | DIGER
+  kind        String // OZGECMIS | SERTIFIKA | MYB | DIGER
   fileName    String
   storedPath  String
   mimeType    String
@@ -301,7 +337,7 @@ model Document {
 model ContactLog {
   id          String   @id @default(cuid())
   candidateId String
-  channel     String   // TELEFON | EPOSTA | SMS | YUZYUZE
+  channel     String // TELEFON | EPOSTA | SMS | YUZYUZE
   note        String
   userId      String?
   createdAt   DateTime @default(now())
@@ -328,21 +364,21 @@ model Vacancy {
 }
 
 model Application {
-  id          String   @id @default(cuid())
-  candidateId String
-  positionId  String?  // null = genel başvuru ("Özgeçmiş Bırak")
-  vacancyId   String?
-  stage       String   @default("YENI_BASVURU") // işe alım panosu aşaması
-  status      String   @default("AKTIF") // AKTIF | OLUMSUZ | YEDEK | ISE_ALINDI
-  rejectReason String  @default("")
-  suitability Float?   // hesaplanan işe uygunluk puanı (0-100)
-  appliedAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(cuid())
+  candidateId  String
+  positionId   String? // null = genel başvuru ("Özgeçmiş Bırak")
+  vacancyId    String?
+  stage        String   @default("YENI_BASVURU") // işe alım panosu aşaması
+  status       String   @default("AKTIF") // AKTIF | OLUMSUZ | YEDEK | ISE_ALINDI
+  rejectReason String   @default("")
+  suitability  Float? // hesaplanan işe uygunluk puanı (0-100)
+  appliedAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  position  Position? @relation(fields: [positionId], references: [id])
-  vacancy   Vacancy?  @relation(fields: [vacancyId], references: [id])
-  history   StageHistory[]
+  candidate  Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  position   Position?      @relation(fields: [positionId], references: [id])
+  vacancy    Vacancy?       @relation(fields: [vacancyId], references: [id])
+  history    StageHistory[]
   interviews Interview[]
 }
 
@@ -366,28 +402,29 @@ model Assignment {
   candidateId   String
   examPackageId String
   accessCode    String    @unique // ör. 7K-3F9A
-  positionId    String?   // profil karşılaştırması için hedef pozisyon
+  positionId    String? // profil karşılaştırması için hedef pozisyon
   expiresAt     DateTime?
   kvkkAccepted  Boolean   @default(false)
   createdAt     DateTime  @default(now())
 
-  candidate   Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  examPackage ExamPackage    @relation(fields: [examPackageId], references: [id])
+  candidate   Candidate        @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  examPackage ExamPackage      @relation(fields: [examPackageId], references: [id])
+  position    Position?        @relation(fields: [positionId], references: [id])
   tests       AssignmentTest[]
 }
 
 model AssignmentTest {
-  id           String    @id @default(cuid())
-  assignmentId String
-  testFormId   String
-  status       String    @default("BASLAMADI") // BASLAMADI | DEVAM | TAMAMLANDI
-  startedAt    DateTime?
-  completedAt  DateTime?
-  currentSection Int     @default(0)
+  id              String    @id @default(cuid())
+  assignmentId    String
+  testFormId      String
+  status          String    @default("BASLAMADI") // BASLAMADI | DEVAM | TAMAMLANDI
+  startedAt       DateTime?
+  completedAt     DateTime?
+  currentSection  Int       @default(0)
   sectionDeadline DateTime? // aktif bölümün bitiş zamanı (kesinti telafisi: admin güncelleyebilir)
-  totalScore   Float?
-  resultJson   String    @default("{}") // boyut puanları, GEÇTİ/KALDI, uyum %si, uyumu düşüren boyutlar
-  itemOrder    String    @default("[]") // karıştırılmış madde sırası (JSON)
+  totalScore      Float?
+  resultJson      String    @default("{}") // boyut puanları, GEÇTİ/KALDI, uyum %si, uyumu düşüren boyutlar
+  itemOrder       String    @default("[]") // karıştırılmış madde sırası (JSON)
 
   assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
   testForm   TestForm   @relation(fields: [testFormId], references: [id])
@@ -414,17 +451,17 @@ model Answer {
 // ── Mülakat ve Değerlendirmeler ─────────────────────────────────
 
 model Interview {
-  id            String    @id @default(cuid())
-  applicationId String
-  type          String    // IK_MULAKAT | TEKNIK_MULAKAT | ISG_DEGERLENDIRME | UYGULAMALI
-  evaluatorId   String
-  scheduledAt   DateTime?
-  status        String    @default("PLANLANDI") // PLANLANDI | TAMAMLANDI | IPTAL
-  scoresJson    String    @default("[]") // [{criterion, score(1-5), comment}]
-  overallScore  Float?
-  recommendation String   @default("") // OLUMLU | KOSULLU | OLUMSUZ
-  comments      String    @default("")
-  completedAt   DateTime?
+  id             String    @id @default(cuid())
+  applicationId  String
+  type           String // IK_MULAKAT | TEKNIK_MULAKAT | ISG_DEGERLENDIRME | UYGULAMALI
+  evaluatorId    String
+  scheduledAt    DateTime?
+  status         String    @default("PLANLANDI") // PLANLANDI | TAMAMLANDI | IPTAL
+  scoresJson     String    @default("[]") // [{criterion, score(1-5), comment}]
+  overallScore   Float?
+  recommendation String    @default("") // OLUMLU | KOSULLU | OLUMSUZ
+  comments       String    @default("")
+  completedAt    DateTime?
 
   application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   evaluator   User        @relation("evaluator", fields: [evaluatorId], references: [id])
@@ -432,14 +469,14 @@ model Interview {
 
 // İşe uygunluk puanı ağırlıkları (pozisyon bazlı; null pozisyon = genel varsayılan)
 model ScoreWeight {
-  id               String  @id @default(cuid())
-  positionId       String? @unique // null → genel varsayılan
-  abilityWeight    Int     @default(35)
-  personalityWeight Int    @default(20)
-  ikInterviewWeight Int    @default(15)
-  techInterviewWeight Int  @default(15)
-  practicalWeight  Int     @default(10)
-  isgWeight        Int     @default(5)
+  id                  String  @id @default(cuid())
+  positionId          String? @unique // null → genel varsayılan
+  abilityWeight       Int     @default(35)
+  personalityWeight   Int     @default(20)
+  ikInterviewWeight   Int     @default(15)
+  techInterviewWeight Int     @default(15)
+  practicalWeight     Int     @default(10)
+  isgWeight           Int     @default(5)
   // toplam 100 kontrolü uygulama katmanında
 
   position Position? @relation(fields: [positionId], references: [id], onDelete: Cascade)
@@ -448,19 +485,19 @@ model ScoreWeight {
 // ── Çalışan ve Performans (Faz 2 iskeleti) ──────────────────────
 
 model Employee {
-  id          String    @id @default(cuid())
-  candidateId String?   @unique
-  sicilNo     String    @unique
+  id          String   @id @default(cuid())
+  candidateId String?  @unique
+  sicilNo     String   @unique
   firstName   String
   lastName    String
   positionId  String
   facilityId  String
   hireDate    DateTime
-  status      String    @default("DENEME") // DENEME | KADROLU | AYRILDI
+  status      String   @default("DENEME") // DENEME | KADROLU | AYRILDI
 
-  candidate Candidate? @relation(fields: [candidateId], references: [id])
-  position  Position   @relation(fields: [positionId], references: [id])
-  facility  Facility   @relation(fields: [facilityId], references: [id])
+  candidate   Candidate?              @relation(fields: [candidateId], references: [id])
+  position    Position                @relation(fields: [positionId], references: [id])
+  facility    Facility                @relation(fields: [facilityId], references: [id])
   evaluations PerformanceEvaluation[]
 }
 
@@ -500,7 +537,7 @@ model AuditLog {
   id        String   @id @default(cuid())
   userId    String?
   actorType String   @default("USER") // USER | CANDIDATE | SYSTEM
-  action    String   // CREATE | UPDATE | DELETE | LOGIN | EXPORT | STAGE_MOVE | SCORE | ...
+  action    String // CREATE | UPDATE | DELETE | LOGIN | EXPORT | STAGE_MOVE | SCORE | ...
   entity    String
   entityId  String   @default("")
   detail    String   @default("")

@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# Local databases
+prisma/*.db
+prisma/*.db-journal
+prisma/*.db-shm
+prisma/*.db-wal
+
+# Uploaded candidate documents
+public/uploads/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+prisma/seed.archive-original.ts
