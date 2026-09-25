@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";import ExamShareCard from "@/components/exam/ExamShareCard";
 import { db } from "@/lib/prisma";
+import { getSession } from "@/lib/auth";
 import RecruitmentProcess from "@/components/candidate/RecruitmentProcess";
 type Props = {
   params: Promise<{ id: string }>;
@@ -10,7 +11,7 @@ export default async function AdayDetay({
   params,
 }: Props) {
   const { id } = await params;
-
+const session = await getSession();
   const candidate = await db.candidate.findUnique({
   where: { id },
 
@@ -76,7 +77,71 @@ export default async function AdayDetay({
     candidate.assignments[0] ?? null;
     const application =
   candidate.applications[0] ?? null;
+const assignmentCompleted =
+  assignment !== null &&
+  assignment.tests.length > 0 &&
+  assignment.tests.every(
+    (test) => test.status === "TAMAMLANDI"
+  );
 
+const latestAbilityTest =
+  assignment?.tests.find(
+    (test) =>
+      test.testForm.kind === "YETENEK"
+  ) ?? null;
+
+let latestAbilityResult: {
+  passed?: boolean;
+  result?: string;
+} | null = null;
+
+if (
+  latestAbilityTest?.status ===
+  "TAMAMLANDI"
+) {
+  try {
+    latestAbilityResult =
+      JSON.parse(
+        latestAbilityTest.resultJson ||
+          "{}"
+      );
+  } catch {
+    latestAbilityResult = null;
+  }
+}
+
+const abilityFailed =
+  latestAbilityResult?.passed === false;
+
+const canAssignExam =
+  !assignment ||
+  (assignmentCompleted &&
+    abilityFailed);
+    const isRetryExam =
+  assignment !== null &&
+  assignmentCompleted &&
+  abilityFailed;
+
+let retryAvailableAt: Date | null = null;
+
+if (
+  isRetryExam &&
+  latestAbilityTest?.completedAt
+) {
+  retryAvailableAt =
+    new Date(
+      latestAbilityTest.completedAt
+    );
+
+  retryAvailableAt.setMonth(
+    retryAvailableAt.getMonth() + 3
+  );
+}
+
+const isEarlyRetry =
+  isRetryExam &&
+  retryAvailableAt !== null &&
+  new Date() < retryAvailableAt;
 const cv =
   candidate.documents.find(
     (document) =>
@@ -1051,26 +1116,122 @@ const stageLabels: Record<string, string> = {
         </div>
       </div>
 
-      {!assignment && (
+      {canAssignExam && (
   <div
     className="card"
     style={{
       marginBottom: 22,
     }}
   >
-    <h2>Sınav Ata</h2>
+    <h2>
+  {isRetryExam
+    ? "Tekrar Sınavı Ata"
+    : "Sınav Ata"}
+</h2>
 
     <p
-      className="muted"
+  className="muted"
+  style={{
+    marginTop: 8,
+    marginBottom: 20,
+    lineHeight: 1.6,
+  }}
+>
+  {isRetryExam
+    ? "Aday önceki Genel Yetenek sınavında başarısız olduğu için alternatif Genel Yetenek formu ile yeniden değerlendirilecektir."
+    : "Adayın değerlendirileceği pozisyonu seçin. Sınav paketi pozisyona göre sistem tarafından otomatik belirlenir."}
+</p>
+
+{isRetryExam && latestAbilityTest && (
+  <div
+    style={{
+      marginBottom: 18,
+      padding: 16,
+      borderRadius: 10,
+      background: isEarlyRetry
+        ? "#fff7ed"
+        : "#ecfdf5",
+      border: isEarlyRetry
+        ? "1px solid #fed7aa"
+        : "1px solid #bbf7d0",
+    }}
+  >
+    <div
       style={{
-        marginTop: 8,
-        marginBottom: 20,
+        fontWeight: 700,
+        marginBottom: 8,
       }}
     >
-      Adayın değerlendirileceği pozisyonu
-      seçin. Sınav paketi pozisyona göre
-      sistem tarafından otomatik belirlenir.
-    </p>
+      Önceki Genel Yetenek Sonucu
+    </div>
+
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns:
+          "repeat(auto-fit, minmax(180px, 1fr))",
+        gap: 10,
+        fontSize: 14,
+      }}
+    >
+      <div>
+        <span className="muted">
+          Puan
+        </span>
+        <br />
+        <strong>
+          {Number(
+            latestAbilityTest.totalScore ?? 0
+          ).toLocaleString("tr-TR", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}
+          /100
+        </strong>
+      </div>
+
+      <div>
+        <span className="muted">
+          Sonuç
+        </span>
+        <br />
+        <strong>KALDI</strong>
+      </div>
+
+      <div>
+        <span className="muted">
+          Tekrar hakkı
+        </span>
+        <br />
+        <strong>
+          {retryAvailableAt
+            ? retryAvailableAt.toLocaleDateString(
+                "tr-TR"
+              )
+            : "-"}
+        </strong>
+      </div>
+    </div>
+
+    {isEarlyRetry && (
+      <div
+        style={{
+          marginTop: 14,
+          fontSize: 13,
+          lineHeight: 1.6,
+        }}
+      >
+        <strong>
+          3 aylık bekleme süresi henüz dolmadı.
+        </strong>
+        <br />
+        Sistem Yöneticisi olarak gerekçe
+        girerek erken tekrar sınavı
+        atayabilirsiniz.
+      </div>
+    )}
+  </div>
+)}
 
     {positions.length === 0 ? (
       <div
@@ -1106,35 +1267,58 @@ const stageLabels: Record<string, string> = {
             Pozisyon
           </label>
 
-          <select
-            id="positionId"
-            name="positionId"
-            required
-            defaultValue=""
-            style={{
-              width: "100%",
-              padding: 13,
-              borderRadius: 8,
-              border: "1px solid #d1d5db",
-              background: "#fff",
-              fontSize: 15,
-            }}
-          >
-            <option value="">
-              Pozisyon seçiniz
-            </option>
+          {isRetryExam ? (
+  <>
+    <div
+      style={{
+        padding: 13,
+        borderRadius: 8,
+        border: "1px solid #d1d5db",
+        background: "#f8fafc",
+        fontSize: 15,
+      }}
+    >
+      {assignment?.position?.name ??
+        "Pozisyon belirtilmemiş"}
+    </div>
 
-            {positions.map((position) => (
-              <option
-                key={position.id}
-                value={position.id}
-              >
-                {position.name} —{" "}
-                {position.examPackage?.name ??
-                  "Sınav paketi yok"}
-              </option>
-            ))}
-          </select>
+    <input
+      type="hidden"
+      name="positionId"
+      value={assignment?.positionId ?? ""}
+    />
+  </>
+) : (
+  <select
+    id="positionId"
+    name="positionId"
+    required
+    defaultValue=""
+    style={{
+      width: "100%",
+      padding: 13,
+      borderRadius: 8,
+      border: "1px solid #d1d5db",
+      background: "#fff",
+      fontSize: 15,
+    }}
+  >
+    <option value="">
+      Pozisyon seçiniz
+    </option>
+
+    {positions.map((position) => (
+      <option
+        key={position.id}
+        value={position.id}
+      >
+        {position.name} —{" "}
+        {position.examPackage?.name ??
+          "Sınav paketi yok"}
+      </option>
+    ))}
+  </select>
+)}
         </div>
 
         <div
@@ -1191,7 +1375,37 @@ const stageLabels: Record<string, string> = {
             ))}
           </div>
         </div>
+{isEarlyRetry &&
+  session?.role ===
+    "SISTEM_YONETICISI" && (
+    <div>
+      <label
+        htmlFor="earlyRetryReason"
+        style={{
+          display: "block",
+          marginBottom: 7,
+          fontWeight: 600,
+        }}
+      >
+        Erken Tekrar Sınavı Gerekçesi *
+      </label>
 
+      <textarea
+        id="earlyRetryReason"
+        name="earlyRetryReason"
+        required
+        rows={3}
+        placeholder="Erken tekrar sınavı için gerekçeyi yazınız."
+        style={{
+          width: "100%",
+          padding: 12,
+          borderRadius: 8,
+          border: "1px solid #d1d5db",
+          resize: "vertical",
+        }}
+      />
+    </div>
+  )}
         <div
           style={{
             display: "flex",
@@ -1204,7 +1418,9 @@ const stageLabels: Record<string, string> = {
             type="submit"
             className="button"
           >
-            Sınavı Ata
+            {isRetryExam
+  ? "Tekrar Sınavı Ata"
+  : "Sınavı Ata"}
           </button>
 
           <span
@@ -1213,8 +1429,9 @@ const stageLabels: Record<string, string> = {
               fontSize: 13,
             }}
           >
-            Pozisyon seçildiğinde ilgili sınav
-            paketi otomatik atanır.
+            {isRetryExam
+  ? "Aday için alternatif Genel Yetenek formu ile tekrar sınavı oluşturulur."
+  : "Pozisyon seçildiğinde ilgili sınav paketi otomatik atanır."}
           </span>
         </div>
       </form>
