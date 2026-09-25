@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { db } from "@/lib/prisma";
 import { randomBytes } from "crypto";
 import { getSession } from "@/lib/auth";
+import { getExamRetryConfig } from "@/lib/exam-retry-config";
 
 type Params = {
   params: Promise<{ id: string }>;
@@ -24,15 +25,18 @@ export async function POST(
     if (!session) {
       return NextResponse.json(
         {
-          error: "Kurumsal giriş yapmanız gerekiyor.",
+          error:
+            "Kurumsal giriş yapmanız gerekiyor.",
         },
         { status: 401 }
       );
     }
 
-    const { id: candidateId } = await params;
+    const { id: candidateId } =
+      await params;
 
-    const formData = await request.formData();
+    const formData =
+      await request.formData();
 
     const positionId = String(
       formData.get("positionId") ?? ""
@@ -93,7 +97,8 @@ export async function POST(
     if (!position.isActive) {
       return NextResponse.json(
         {
-          error: "Seçilen pozisyon aktif değil.",
+          error:
+            "Seçilen pozisyon aktif değil.",
         },
         { status: 400 }
       );
@@ -110,7 +115,8 @@ export async function POST(
     }
 
     if (
-      position.examPackage.tests.length === 0
+      position.examPackage.tests.length ===
+      0
     ) {
       return NextResponse.json(
         {
@@ -120,6 +126,18 @@ export async function POST(
         { status: 400 }
       );
     }
+
+    /*
+     * Pozisyon için tekrar sınavı konfigürasyonu.
+     *
+     * Örnek:
+     * Yeni Üretim Elemanı
+     * GY-YUR -> GY-YUR-B
+     */
+    const retryConfig =
+      getExamRetryConfig(
+        position.name
+      );
 
     /*
      * -------------------------------------------------------
@@ -146,7 +164,8 @@ export async function POST(
       });
 
     /*
-     * Devam eden bir atama varsa yeni atama oluşturma.
+     * Devam eden atama varsa yeni atama
+     * oluşturma.
      */
     const activeAssignment =
       previousAssignments.find(
@@ -154,7 +173,8 @@ export async function POST(
           assignment.tests.length > 0 &&
           assignment.tests.some(
             (test) =>
-              test.status !== "TAMAMLANDI"
+              test.status !==
+              "TAMAMLANDI"
           )
       );
 
@@ -171,7 +191,7 @@ export async function POST(
     }
 
     /*
-     * Tamamlanmış Genel Yetenek testleri.
+     * Tamamlanmış yetenek testlerini bul.
      */
     const abilityTests =
       previousAssignments.flatMap(
@@ -181,8 +201,10 @@ export async function POST(
               (test) =>
                 test.testForm.kind ===
                   "YETENEK" &&
-                test.status === "TAMAMLANDI" &&
-                test.completedAt !== null
+                test.status ===
+                  "TAMAMLANDI" &&
+                test.completedAt !==
+                  null
             )
             .map((test) => ({
               test,
@@ -197,47 +219,51 @@ export async function POST(
           a.test.completedAt!.getTime()
       )[0];
 
+    /*
+     * Başlangıçta pozisyonun normal paketi.
+     */
     let selectedPackageId =
       position.examPackage.id;
 
     let isEarlyRetry = false;
-
     let earlyRetryReason = "";
 
     /*
      * -------------------------------------------------------
-     * İLK FORM / TEKRAR FORMU KONTROLÜ
+     * İLK FORM / TEKRAR FORMU
      * -------------------------------------------------------
      */
 
-    if (latestAbilityTest) {
+    if (
+      latestAbilityTest &&
+      retryConfig
+    ) {
       const latestAbilityFormCode =
         latestAbilityTest.test.testForm.code;
 
       /*
-       * GY-YUR-B tamamlandıysa şu anda üçüncü
-       * bir Genel Yetenek formumuz bulunmuyor.
+       * Tekrar formu daha önce tamamlandıysa
+       * yeni bir tekrar ataması yok.
        */
       if (
         latestAbilityFormCode ===
-        "GY-YUR-B"
+        retryConfig.retryFormCode
       ) {
         return NextResponse.json(
           {
             error:
-              "Aday GY-YUR-B tekrar sınavını daha önce tamamlamış. Yeni bir alternatif Genel Yetenek formu henüz tanımlanmamıştır.",
+              "Aday alternatif Genel Yetenek tekrar sınavını daha önce tamamlamış. Yeni bir alternatif form henüz tanımlanmamıştır.",
           },
           { status: 409 }
         );
       }
 
       /*
-       * İlk formun başarılı olması durumunda
-       * yeniden Genel Yetenek sınavı atanmaz.
+       * İlk form üzerinden tekrar süreci.
        */
       if (
         latestAbilityFormCode ===
-        "GY-YUR"
+        retryConfig.firstFormCode
       ) {
         let result: {
           passed?: boolean;
@@ -253,6 +279,10 @@ export async function POST(
           result = {};
         }
 
+        /*
+         * İlk Genel Yetenek sınavı başarılıysa
+         * tekrar sınavı açılmaz.
+         */
         if (result.passed === true) {
           return NextResponse.json(
             {
@@ -264,9 +294,11 @@ export async function POST(
         }
 
         /*
-         * İlk sınav başarısızsa 3 aylık bekleme.
+         * İlk sınav başarısız.
          */
-        if (result.passed === false) {
+        if (
+          result.passed === false
+        ) {
           const completedAt =
             latestAbilityTest.test
               .completedAt;
@@ -275,7 +307,7 @@ export async function POST(
             return NextResponse.json(
               {
                 error:
-                  "Tamamlanmış sınavın tarihi bulunamadı.",
+                  "Tamamlanmış Genel Yetenek sınavının tamamlanma tarihi bulunamadı.",
               },
               { status: 500 }
             );
@@ -285,16 +317,17 @@ export async function POST(
             new Date(completedAt);
 
           retryDate.setMonth(
-            retryDate.getMonth() + 3
+            retryDate.getMonth() +
+              retryConfig.waitMonths
           );
 
           const now = new Date();
 
+          /*
+           * 3 ay dolmamışsa:
+           * normal kullanıcı engellenir.
+           */
           if (now < retryDate) {
-            /*
-             * Normal kullanıcı 3 ay dolmadan
-             * tekrar sınavı atayamaz.
-             */
             if (
               session.role !==
               "SISTEM_YONETICISI"
@@ -312,7 +345,7 @@ export async function POST(
 
             /*
              * Sistem yöneticisi erken tekrar
-             * yapabilir; gerekçe zorunludur.
+             * verebilir. Gerekçe zorunlu.
              */
             earlyRetryReason =
               String(
@@ -335,39 +368,76 @@ export async function POST(
           }
 
           /*
-           * Yeni Üretim Elemanı için alternatif
-           * Form B paketini seç.
+           * Uygun tekrar paketini bul.
            */
-          if (
-            position.name ===
-            "Yeni Üretim Elemanı"
-          ) {
-            const retryPackage =
-              await db.examPackage.findFirst(
-                {
-                  where: {
-                    name:
-                      "Yeni Üretim Elemanı Tekrar Sınav Uygulaması",
-                    isActive: true,
-                  },
-                }
-              );
-
-            if (!retryPackage) {
-              return NextResponse.json(
-                {
-                  error:
-                    "Yeni Üretim Elemanı tekrar sınav paketi bulunamadı.",
+          const retryPackage =
+            await db.examPackage.findFirst(
+              {
+                where: {
+                  name:
+                    retryConfig.retryPackageName,
+                  isActive: true,
                 },
-                { status: 500 }
-              );
-            }
+              }
+            );
 
-            selectedPackageId =
-              retryPackage.id;
+          if (!retryPackage) {
+            return NextResponse.json(
+              {
+                error:
+                  `${position.name} için tekrar sınav paketi bulunamadı.`,
+              },
+              { status: 500 }
+            );
           }
+
+          selectedPackageId =
+            retryPackage.id;
         }
       }
+    }
+
+    /*
+     * -------------------------------------------------------
+     * SEÇİLEN PAKET
+     * -------------------------------------------------------
+     */
+
+    const selectedPackage =
+      await db.examPackage.findUnique({
+        where: {
+          id: selectedPackageId,
+        },
+        include: {
+          tests: {
+            orderBy: {
+              order: "asc",
+            },
+          },
+        },
+      });
+
+    if (!selectedPackage) {
+      return NextResponse.json(
+        {
+          error:
+            "Seçilen sınav paketi bulunamadı.",
+        },
+        { status: 500 }
+      );
+    }
+
+    if (
+      selectedPackage.tests.length ===
+      0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Seçilen sınav paketinde test bulunmuyor.",
+        },
+        { status: 500 }
+      );
     }
 
     /*
@@ -411,49 +481,7 @@ export async function POST(
 
     /*
      * -------------------------------------------------------
-     * SEÇİLEN PAKET
-     * -------------------------------------------------------
-     */
-
-    const selectedPackage =
-      await db.examPackage.findUnique({
-        where: {
-          id: selectedPackageId,
-        },
-        include: {
-          tests: {
-            orderBy: {
-              order: "asc",
-            },
-          },
-        },
-      });
-
-    if (!selectedPackage) {
-      return NextResponse.json(
-        {
-          error:
-            "Seçilen sınav paketi bulunamadı.",
-        },
-        { status: 500 }
-      );
-    }
-
-    if (
-      selectedPackage.tests.length === 0
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "Seçilen sınav paketinde test bulunmuyor.",
-        },
-        { status: 500 }
-      );
-    }
-
-    /*
-     * -------------------------------------------------------
-     * ATAMA
+     * ATAMA + APPLICATION + AUDIT
      * -------------------------------------------------------
      */
 
@@ -480,25 +508,30 @@ export async function POST(
             },
           });
 
-        for (const packageTest of
-          selectedPackage.tests) {
-          await tx.assignmentTest.create({
-            data: {
-              assignmentId:
-                assignment.id,
-              testFormId:
-                packageTest.testFormId,
-              status: "BASLAMADI",
-              currentSection: 0,
-              resultJson: "{}",
-              itemOrder: "[]",
-            },
-          });
+        for (
+          const packageTest of
+            selectedPackage.tests
+        ) {
+          await tx.assignmentTest.create(
+            {
+              data: {
+                assignmentId:
+                  assignment.id,
+                testFormId:
+                  packageTest.testFormId,
+                status:
+                  "BASLAMADI",
+                currentSection: 0,
+                resultJson: "{}",
+                itemOrder: "[]",
+              },
+            }
+          );
         }
 
         /*
-         * Erken tekrar sınavında audit kaydı
-         * başarılı atamayla aynı transaction içinde tutulur.
+         * Erken tekrar işlemi ile atama
+         * aynı transaction içinde audit edilir.
          */
         if (isEarlyRetry) {
           await tx.auditLog.create({
@@ -535,7 +568,8 @@ export async function POST(
     return new Response(null, {
       status: 303,
       headers: {
-        Location: `/adaylar/${candidateId}`,
+        Location:
+          `/adaylar/${candidateId}`,
       },
     });
   } catch (error) {
