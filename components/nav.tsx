@@ -113,7 +113,7 @@ export async function Nav() {
                 Çıkış Yap
               </button>
             </form>
-          </>
+                    </>
         ) : (
           <>
             {/* KARİYER PORTALI MENÜSÜ */}
@@ -127,10 +127,6 @@ export async function Nav() {
 
             <Link href="/#cimkoda-yasam">
               Çimko&apos;da Yaşam
-            </Link>
-
-            <Link href="/aday">
-              Aday Sınav Girişi
             </Link>
 
             <Link
