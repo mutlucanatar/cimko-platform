@@ -63,18 +63,20 @@ model Department {
 }
 
 model Position {
-  id            String  @id @default(cuid())
-  departmentId  String
-  name          String
-  jobFamily     String
-  description   String  @default("")
-  educationReq  String  @default("")
-  experienceReq String  @default("")
-  certificates  String  @default("")
-  shiftSuitable Boolean @default(true)
-  physicalReq   String  @default("")
-  isgNotes      String  @default("")
-  isActive      Boolean @default(true)
+  id                               String             @id @default(cuid())
+  departmentId                     String
+  name                             String
+  jobFamily                        String
+  description                      String             @default("")
+  educationReq                     String             @default("")
+  experienceReq                    String             @default("")
+  certificates                     String             @default("")
+  shiftSuitable                    Boolean            @default(true)
+  physicalReq                      String             @default("")
+  isgNotes                         String             @default("")
+  promotionRequestCurrentPositions PromotionRequest[] @relation("promotionRequestCurrentPosition")
+  promotionRequestTargetPositions  PromotionRequest[] @relation("promotionRequestTargetPosition")
+  isActive                         Boolean            @default(true)
 
   cutoffScore Int    @default(50)
   normScore   Int    @default(65)
@@ -204,20 +206,22 @@ model Item {
   isActive         Boolean  @default(true)
   createdAt        DateTime @default(now())
 
-  personalityDim PersonalityDimension? @relation(fields: [personalityDimId], references: [id])
-  stimulusGroup  StimulusGroup?        @relation(fields: [stimulusGroupId], references: [id])
-  testItems      TestItem[]
-  answers        Answer[]
+  personalityDim       PersonalityDimension? @relation(fields: [personalityDimId], references: [id])
+  stimulusGroup        StimulusGroup?        @relation(fields: [stimulusGroupId], references: [id])
+  testItems            TestItem[]
+  answers              Answer[]
+  promotionExamAnswers PromotionExamAnswer[]
 }
 
 model TestForm {
-  id          String   @id @default(cuid())
-  name        String
-  code        String   @unique
-  kind        String // YETENEK | KISILIK | TUTUM
-  description String   @default("")
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
+  id                 String              @id @default(cuid())
+  name               String
+  code               String              @unique
+  kind               String // YETENEK | KISILIK | TUTUM
+  description        String              @default("")
+  promotionExamTests PromotionExamTest[]
+  isActive           Boolean             @default(true)
+  createdAt          DateTime            @default(now())
 
   sections         TestSection[]
   examTests        ExamPackageTest[]
@@ -495,10 +499,11 @@ model Employee {
   hireDate    DateTime
   status      String   @default("DENEME") // DENEME | KADROLU | AYRILDI
 
-  candidate   Candidate?              @relation(fields: [candidateId], references: [id])
-  position    Position                @relation(fields: [positionId], references: [id])
-  facility    Facility                @relation(fields: [facilityId], references: [id])
-  evaluations PerformanceEvaluation[]
+  candidate         Candidate?              @relation(fields: [candidateId], references: [id])
+  position          Position                @relation(fields: [positionId], references: [id])
+  facility          Facility                @relation(fields: [facilityId], references: [id])
+  evaluations       PerformanceEvaluation[]
+  promotionRequests PromotionRequest[]
 }
 
 model PerformancePeriod {
@@ -529,6 +534,115 @@ model PerformanceEvaluation {
   evaluator User              @relation("perfEvaluator", fields: [evaluatorId], references: [id])
 
   @@unique([periodId, employeeId, evaluatorId, type])
+}
+
+model PromotionPeriod {
+  id        String   @id @default(cuid())
+  name      String // HAZIRAN_2026 | ARALIK_2026
+  month     Int // 6 veya 12
+  year      Int
+  startDate DateTime
+  endDate   DateTime
+  status    String   @default("TASLAK") // TASLAK | ACIK | KAPALI
+  createdAt DateTime @default(now())
+
+  requests PromotionRequest[]
+  exams    PromotionExam[]
+
+  @@unique([month, year])
+}
+
+model PromotionRequest {
+  id String @id @default(cuid())
+
+  // Çalışan sistemde kayıtlıysa bağlanır.
+  // Sistemde kayıtlı değilse null kalır.
+  employeeId String?
+
+  employeeFirstName String
+  employeeLastName  String
+  sicilNo           String
+  facilityName      String @default("")
+  currentPositionId String
+  targetPositionId  String
+  promotionPeriodId String
+
+  requesterName String
+  requestDate   DateTime @default(now())
+  reason        String   @default("")
+  notes         String   @default("")
+
+  status String @default("TALEP")
+  // TALEP | SINAV_ATANDI | SINAVDA | BASARILI | KALDI | IPTAL
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employee        Employee?       @relation(fields: [employeeId], references: [id])
+  currentPosition Position        @relation("promotionRequestCurrentPosition", fields: [currentPositionId], references: [id])
+  targetPosition  Position        @relation("promotionRequestTargetPosition", fields: [targetPositionId], references: [id])
+  promotionPeriod PromotionPeriod @relation(fields: [promotionPeriodId], references: [id])
+
+  exams PromotionExam[]
+}
+
+model PromotionExam {
+  id                 String @id @default(cuid())
+  promotionRequestId String
+  promotionPeriodId  String
+
+  attemptNo Int    @default(1)
+  status    String @default("ATANMADI")
+  // ATANMADI | DEVAM_EDIYOR | TAMAMLANDI
+
+  result String @default("")
+  // BASARILI | KALDI
+
+  score            Float?
+  completedAt      DateTime?
+  createdAt        DateTime         @default(now())
+  accessCode       String?          @unique
+  expiresAt        DateTime?
+  promotionRequest PromotionRequest @relation(fields: [promotionRequestId], references: [id], onDelete: Cascade)
+  promotionPeriod  PromotionPeriod  @relation(fields: [promotionPeriodId], references: [id])
+
+  tests PromotionExamTest[]
+
+  @@unique([promotionRequestId, promotionPeriodId, attemptNo])
+}
+
+model PromotionExamTest {
+  id              String                @id @default(cuid())
+  promotionExamId String
+  testFormId      String
+  status          String                @default("BASLAMADI")
+  startedAt       DateTime?
+  completedAt     DateTime?
+  totalScore      Float?
+  currentSection  Int                   @default(0)
+  sectionDeadline DateTime?
+  itemOrder       String                @default("[]")
+  resultJson      String                @default("{}")
+  answers         PromotionExamAnswer[]
+  promotionExam   PromotionExam         @relation(fields: [promotionExamId], references: [id], onDelete: Cascade)
+  testForm        TestForm              @relation(fields: [testFormId], references: [id])
+
+  @@unique([promotionExamId, testFormId])
+}
+
+model PromotionExamAnswer {
+  id                  String   @id @default(cuid())
+  promotionExamTestId String
+  itemId              String
+  selectedKey         String?
+  textValue           String?
+  isCorrect           Boolean?
+  answeredAt          DateTime @default(now())
+
+  promotionExamTest PromotionExamTest @relation(fields: [promotionExamTestId], references: [id], onDelete: Cascade)
+  item              Item              @relation(fields: [itemId], references: [id])
+
+  @@unique([promotionExamTestId, itemId])
 }
 
 // ── Sistem ──────────────────────────────────────────────────────

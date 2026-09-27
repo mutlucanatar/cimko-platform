@@ -30,10 +30,13 @@ type CompleteResponse = {
   nextTest?: NextTest | null;
   error?: string;
 };
+type ExamMode = "NORMAL" | "PROMOTION";
 
 type ExamRunnerProps = {
   assignmentId: string;
   assignmentTestId: string;
+  mode?: ExamMode;
+
   startedAt?: string | null;
   sectionDeadline?: string | null;
 
@@ -63,6 +66,7 @@ export default function ExamRunner({
   durationMin,
   items,
   initialAnswers = {},
+  mode = "NORMAL",
 }: ExamRunnerProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
 

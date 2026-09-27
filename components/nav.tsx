@@ -53,7 +53,9 @@ export async function Nav() {
             <Link href="/adaylar">
               Adaylar
             </Link>
-
+<Link href="/terfi">
+  Mavi Yaka Terfi
+</Link>
             <Link href="/sinavlar">
               Sınavlar
             </Link>
